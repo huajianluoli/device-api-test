@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e13">
+<meta name="mobile-web-app-capable" content="yes">
+<title>设备 API 测试台 · DSH Device Lab</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>设备 API 测试台 <small id="hostInfo"></small></h1>
+  <div id="ctxBanner"></div>
+  <div id="errBanner"></div>
+
+  <div class="toolbar">
+    <button id="btnRun" class="primary">▶ 运行全部检测</button>
+    <button id="btnStop">■ 停止传感器</button>
+    <button id="btnExport">⬇ 导出 JSON</button>
+    <button id="btnExportMd">📄 导出 Markdown</button>
+    <button id="btnCopy">⧉ 复制结果</button>
+    <button id="btnShareCode">🔗 生成分享码</button>
+    <button id="btnSaveHist">💾 存到本机历史</button>
+    <button id="btnCollapse">⇕ 折叠全部</button>
+    <label class="chk"><input type="checkbox" id="chkLog" checked> 事件日志</label>
+  </div>
+
+  <div class="summary" id="summary"></div>
+</header>
+
+<main>
+
+  <!-- ============================ 运行环境 ============================ -->
+  <section class="card" id="card-env">
+    <h2 data-card>🖥️ 运行环境与设备信息 <span class="badge" id="badge-env"></span></h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="panel"><h3>基础信息</h3><table class="kv" id="envTable"></table></div>
+        <div class="panel"><h3>能力探测</h3><div class="rows" id="rows-env"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 传感器 ============================ -->
+  <section class="card" id="card-motion">
+    <h2 data-card>🧭 运动与方向传感器（加速度 / 陀螺仪 / 磁场 / 光照）<span class="badge" id="badge-motion"></span></h2>
+    <div class="body">
+      <p class="hint">
+        <strong>加速度传感器</strong>用 DeviceMotionEvent 读取；陀螺仪看 rotationRate，方向看 DeviceOrientationEvent。
+        在 Android Chrome 上，这些接口<strong>只允许在安全上下文里工作</strong>：HTTPS、localhost，或<strong>直接打开本地文件（file://）</strong>。
+        若下方数值一直是 0，说明当前打开方式被限制，请看页面顶部的提示。
+      </p>
+      <div class="controls">
+        <button id="btnMotion" class="primary">▶ 开始监听传感器</button>
+        <button id="btnMotionStop">■ 停止</button>
+        <button id="btnPermMotion">请求权限（iOS 风格）</button>
+        <span class="tiny" id="motionState">未启动</span>
+      </div>
+
+      <div class="grid2">
+        <div class="panel">
+          <h3>加速度 acceleration（含重力，m/s²）</h3>
+          <div class="metric"><span class="k">X 轴</span><span class="v" id="accX">–</span><div class="bar"><i id="accXb"></i></div></div>
+          <div class="metric"><span class="k">Y 轴</span><span class="v" id="accY">–</span><div class="bar"><i id="accYb"></i></div></div>
+          <div class="metric"><span class="k">Z 轴</span><span class="v" id="accZ">–</span><div class="bar"><i id="accZb"></i></div></div>
+          <div class="metric"><span class="k">合力</span><span class="v" id="accMag">–</span><span class="u">m/s²</span></div>
+          <div class="metric"><span class="k">峰值</span><span class="v" id="accPeak">–</span><span class="u">m/s²</span></div>
+          <div class="metric"><span class="k">采样率</span><span class="v" id="accHz">–</span><span class="u">Hz</span></div>
+        </div>
+
+        <div class="panel">
+          <h3>陀螺仪 rotationRate（°/s）</h3>
+          <div class="metric"><span class="k">α 绕 z</span><span class="v" id="rotA">–</span></div>
+          <div class="metric"><span class="k">β 绕 x</span><span class="v" id="rotB">–</span></div>
+          <div class="metric"><span class="k">γ 绕 y</span><span class="v" id="rotG">–</span></div>
+          <div class="metric"><span class="k">峰值</span><span class="v" id="rotPeak">–</span><span class="u">°/s</span></div>
+        </div>
+
+        <div class="panel">
+          <h3>方向 orientation（°）</h3>
+          <div class="metric"><span class="k">alpha 方位</span><span class="v" id="oriA">–</span></div>
+          <div class="metric"><span class="k">beta 前后</span><span class="v" id="oriB">–</span></div>
+          <div class="metric"><span class="k">gamma 左右</span><span class="v" id="oriG">–</span></div>
+          <div class="metric"><span class="k">绝对方向</span><span class="v" id="oriAbs">–</span></div>
+          <div class="metric"><span class="k">磁北补偿</span><span class="v" id="oriCompass">–</span></div>
+        </div>
+
+        <div class="panel">
+          <h3>加速度波形（最近 6 秒）</h3>
+          <canvas class="viz" id="accChart"></canvas>
+          <div class="tiny" style="margin-top:6px">拿起平板晃动或翻转，波形应明显变化。</div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <h3>通用传感器 Generic Sensor API（Chrome 需开启 chrome://flags/#enable-generic-sensor-extra-classes）</h3>
+        <div class="rows" id="rows-gsensor"></div>
+      </div>
+
+      <div class="panel" style="margin-top:12px"><h3>能力检测</h3><div class="rows" id="rows-motion"></div></div>
+    </div>
+  </section>
+
+  <!-- ============================ 光线 / 亮度 ============================ -->
+  <section class="card" id="card-light">
+    <h2 data-card>💡 光线传感器与环境亮度<span class="badge" id="badge-light"></span></h2>
+    <div class="body">
+      <p class="hint">
+        Android Chrome <strong>没有向网页开放环境光传感器</strong>（AmbientLightSensor 属于被 flag 关闭的实验特性），
+        <strong>也没有屏幕亮度读写接口</strong>。这里提供三种替代手段：
+        ① 尝试原生 AmbientLightSensor；② 用后置摄像头画面平均亮度估算环境光；③ 用亮度测试卡人工比对屏幕亮度。
+      </p>
+      <div class="grid2">
+        <div class="panel">
+          <h3>① 环境光传感器</h3>
+          <div class="metric"><span class="k">照度</span><span class="v" id="luxVal">–</span><span class="u">lux</span></div>
+          <div class="metric"><span class="k">采样</span><span class="v" id="luxHz">–</span></div>
+          <div class="controls"><button id="btnLux">尝试启动环境光传感器</button></div>
+          <div class="tiny" id="luxNote">未启动</div>
+        </div>
+
+        <div class="panel">
+          <h3>② 摄像头测光（替代方案）</h3>
+          <div class="metric"><span class="k">画面亮度</span><span class="v" id="camLum">–</span><span class="u">/255</span></div>
+          <div class="metric"><span class="k">估计照度</span><span class="v" id="camLuxEst">–</span><span class="u">lux*</span></div>
+          <div class="metric"><span class="k">环境判定</span><span class="v" id="camLightLabel">–</span></div>
+          <div class="levelbar"><i id="camLumBar"></i></div>
+          <div class="controls"><button id="btnCamMeter">开启摄像头测光</button><button id="btnCamMeterStop">停止</button></div>
+          <div class="tiny">* 由画面亮度粗略换算，仅供相对比较：把平板对着窗户/黑暗处，数值应明显区分。</div>
+        </div>
+
+        <div class="panel">
+          <h3>③ 屏幕亮度测试卡</h3>
+          <div class="controls">
+            <button data-bright="255,255,255">全白</button>
+            <button data-bright="0,0,0">全黑</button>
+            <button data-bright="128,128,128">中灰</button>
+            <button data-bright="ramp">灰阶</button>
+            <button data-bright="close" class="danger">关闭</button>
+          </div>
+          <div id="brightStage"></div>
+          <div class="tiny" style="margin-top:8px">
+            用法：调到全白，把系统亮度从最低拉到最高，观察白色是否随之变亮 → 说明屏幕亮度由系统控制、网页无法读取。
+            全黑画面用于检查漏光/坏点，灰阶用于检查色阶断层。
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>亮度相关 API 探测</h3>
+          <div class="rows" id="rows-light"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 声音 / 音量 ============================ -->
+  <section class="card" id="card-audio">
+    <h2 data-card>🔊 音量检测（扬声器输出 + 麦克风电平）<span class="badge" id="badge-audio"></span></h2>
+    <div class="body">
+      <p class="hint">
+        网页<strong>读不到系统音量</strong>（Android 不把音量键事件交给页面），但可以：
+        ① 用 Web Audio 播放测试音并控制输出音量，验证扬声器；② 用麦克风实时测量环境音量（dBFS），这就是"音量大小检测"。
+        麦克风需要<strong>安全上下文</strong>（HTTPS / localhost / 本地文件 file://）和用户授权。
+      </p>
+      <div class="grid2">
+        <div class="panel">
+          <h3>扬声器输出测试</h3>
+          <div class="controls">
+            <button id="btnTone" class="primary">▶ 播放测试音</button>
+            <button id="btnToneStop">■ 停止</button>
+            <button id="btnSweep">对数扫频 20Hz→18kHz</button>
+          </div>
+          <div class="slider"><span class="tiny nowrap">音量</span><input type="range" id="toneVol" min="0" max="100" value="50"><span class="tiny mono" id="toneVolVal">50%</span></div>
+          <div class="slider" style="margin-top:6px"><span class="tiny nowrap">频率</span><input type="range" id="toneFreq" min="20" max="18000" value="440"><span class="tiny mono" id="toneFreqVal">440 Hz</span></div>
+          <div class="metric"><span class="k">声道</span><span class="v" id="spkCh">–</span><span class="u">ch</span></div>
+          <div class="metric"><span class="k">采样率</span><span class="v" id="spkRate">–</span><span class="u">Hz</span></div>
+          <div class="metric"><span class="k">输出延迟</span><span class="v" id="spkLat">–</span><span class="u">ms</span></div>
+          <div class="tiny" style="margin-top:6px">播放时按平板的音量键：系统音量会变，但<strong>网页收不到按键事件</strong>（下方"音量键监听"可验证）。</div>
+        </div>
+
+        <div class="panel">
+          <h3>麦克风实时音量（dBFS）</h3>
+          <div class="controls">
+            <button id="btnMic" class="primary">🎤 开始测音量</button>
+            <button id="btnMicStop">■ 停止</button>
+            <button id="btnMicReset">重置峰值</button>
+          </div>
+          <div class="levelbar" style="height:26px"><i id="micBar"></i><span id="micBarTxt">–</span></div>
+          <div class="metric"><span class="k">瞬时</span><span class="v" id="micDb">–</span><span class="u">dBFS</span></div>
+          <div class="metric"><span class="k">峰值</span><span class="v" id="micPeak">–</span><span class="u">dBFS</span></div>
+          <div class="metric"><span class="k">平均</span><span class="v" id="micAvg">–</span><span class="u">dBFS</span></div>
+          <div class="metric"><span class="k">环境等级</span><span class="v" id="micLabel">–</span></div>
+          <div class="metric"><span class="k">输入设备</span><span class="v" id="micDevice">–</span></div>
+          <div class="tiny" style="margin-top:6px">耳朵贴近说话 → 数值上升；安静房间约 -60 dBFS 以下。已关闭回声消除/降噪/自动增益，读数更接近真实。</div>
+        </div>
+
+        <div class="panel">
+          <h3>硬件音量键监听（5 秒）</h3>
+          <div class="controls"><button id="btnVolKeys">开始监听音量键</button></div>
+          <div class="tiny" id="volKeyResult">未测试。点击后 5 秒内按平板侧边的音量 +/- 键。</div>
+          <div class="tiny" style="margin-top:6px">多数 Android 浏览器不会把音量键传给网页，若收不到属正常现象，说明"网页无法检测音量按键"。</div>
+        </div>
+
+        <div class="panel">
+          <h3>音频能力</h3>
+          <div class="rows" id="rows-audio"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 屏幕 / 显示 ============================ -->
+  <section class="card" id="card-screen">
+    <h2 data-card>📱 屏幕与显示<span class="badge" id="badge-screen"></span></h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="panel"><h3>屏幕参数</h3><table class="kv" id="screenTable"></table></div>
+        <div class="panel">
+          <h3>刷新率实测（requestAnimationFrame）</h3>
+          <div class="controls"><button id="btnFps">测量刷新率</button></div>
+          <div class="metric"><span class="k">帧率</span><span class="v" id="fpsVal">–</span><span class="u">fps</span></div>
+          <div class="metric"><span class="k">帧间隔</span><span class="v" id="fpsGap">–</span><span class="u">ms</span></div>
+          <div class="metric"><span class="k">抖动</span><span class="v" id="fpsJitter">–</span><span class="u">ms</span></div>
+        </div>
+        <div class="panel">
+          <h3>屏幕控制</h3>
+          <div class="controls">
+            <button id="btnFs">全屏切换</button>
+            <button id="btnWake">屏幕常亮 Wake Lock</button>
+            <button id="btnOrientLock">锁定竖屏</button>
+            <button id="btnOrientUnlock">解除锁定</button>
+          </div>
+          <div class="metric"><span class="k">全屏</span><span class="v" id="fsState">否</span></div>
+          <div class="metric"><span class="k">常亮</span><span class="v" id="wakeState">未启用</span></div>
+          <div class="metric"><span class="k">方向</span><span class="v" id="orientState">–</span></div>
+          <div class="tiny">页面可见性：<span id="visState" class="mono">–</span></div>
+        </div>
+        <div class="panel"><h3>显示能力探测</h3><div class="rows" id="rows-screen"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 网络 ============================ -->
+  <section class="card" id="card-network">
+    <h2 data-card>🌐 网络与连接<span class="badge" id="badge-network"></span></h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="panel"><h3>连接信息</h3><table class="kv" id="netTable"></table></div>
+        <div class="panel">
+          <h3>本机性能实测（完全离线）</h3>
+          <div class="controls">
+            <button id="btnRtt" class="primary">测主线程调度精度</button>
+            <button id="btnSpeed">测本地吞吐（32 MB）</button>
+          </div>
+          <div class="metric"><span class="k">定时器延迟</span><span class="v" id="rttVal">–</span><span class="u">ms</span></div>
+          <div class="metric"><span class="k">调度抖动</span><span class="v" id="rttJitter">–</span><span class="u">ms</span></div>
+          <div class="metric"><span class="k">内存吞吐</span><span class="v" id="speedVal">–</span><span class="u">MB/s</span></div>
+          <div class="tiny">setTimeout(0) 的调度延迟反映主线程繁忙程度；内存吞吐反映 Blob/ArrayBuffer 与 SHA-256 运算性能。都不需要网络。</div>
+          <div class="controls" style="margin-top:8px">
+            <input id="remoteUrl" placeholder="可选：填一个允许 CORS 的 https 文件地址" style="flex:1;min-width:150px;background:#0a0d12;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px">
+            <button id="btnRemoteSpeed">外部下载测速</button>
+          </div>
+          <div class="tiny mono wrap" id="remoteSpeedVal">未测（跨域地址需要对方服务器允许 CORS，失败属正常现象）</div>
+        </div>
+        <div class="panel"><h3>网络 API 探测</h3><div class="rows" id="rows-network"></div></div>
+        <div class="panel"><h3>WebRTC 本地地址收集（仅用于测试）</h3>
+          <div class="controls"><button id="btnRtc">收集 ICE 候选</button></div>
+          <div class="tiny mono wrap" id="rtcOut">未运行</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 输入 ============================ -->
+  <section class="card" id="card-input">
+    <h2 data-card>👆 输入设备（触摸 / 键盘 / 手柄）<span class="badge" id="badge-input"></span></h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="panel">
+          <h3>多点触控画布</h3>
+          <canvas class="viz touchpad" id="touchpad"></canvas>
+          <div class="tiny" id="touchInfo" style="margin-top:6px">用多根手指同时按在画布上，可看到每个触点的坐标、压力与半径。</div>
+        </div>
+        <div class="panel">
+          <h3>按键事件（含音量键/返回键观察）</h3>
+          <div class="tiny" id="keyInfo">点击这里后按键，最近 12 个按键事件如下：</div>
+          <div class="log" id="keyLog" style="max-height:180px"></div>
+          <div class="rows" id="rows-input" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 摄像头 / 媒体 ============================ -->
+  <section class="card" id="card-media">
+    <h2 data-card>📷 摄像头与媒体<span class="badge" id="badge-media"></span></h2>
+    <div class="body">
+      <p class="hint">摄像头、麦克风、屏幕共享都需要 <strong>安全上下文</strong>（HTTPS、localhost，或直接打开本地文件 file://）+ 用户授权。若按钮点了没反应，先看页面顶部的红色提示。</p>
+      <div class="grid2">
+        <div class="panel">
+          <h3>摄像头预览</h3>
+          <video id="video" playsinline muted></video>
+          <div class="controls">
+            <button id="btnCamFront">前置</button>
+            <button id="btnCamBack">后置</button>
+            <button id="btnCamStop" class="danger">关闭</button>
+            <button id="btnTorch">手电筒</button>
+            <button id="btnShot">拍照</button>
+          </div>
+          <div class="metric"><span class="k">分辨率</span><span class="v" id="camRes">–</span></div>
+          <div class="metric"><span class="k">帧率</span><span class="v" id="camFps">–</span><span class="u">fps</span></div>
+          <div class="metric"><span class="k">设备</span><span class="v" id="camLabel">–</span></div>
+          <canvas id="shotCanvas" style="max-width:100%;border-radius:8px;margin-top:8px;display:none"></canvas>
+        </div>
+        <div class="panel">
+          <h3>摄像头 / 音频设备列表</h3>
+          <div class="tiny" id="deviceList">未枚举（需要授权后才能看到设备名称）</div>
+          <div class="controls"><button id="btnDevices">枚举设备</button></div>
+          <h3 style="margin-top:10px">能力</h3>
+          <div class="rows" id="rows-media"></div>
+        </div>
+        <div class="panel" style="grid-column:1/-1">
+          <h3>媒体格式支持（HTMLMediaElement.canPlayType）</h3>
+          <div class="rows" id="rows-codec"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 存储 ============================ -->
+  <section class="card" id="card-storage">
+    <h2 data-card>💾 存储与数据<span class="badge" id="badge-storage"></span></h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="panel">
+          <h3>存储读写实测</h3>
+          <div class="controls">
+            <button id="btnStorage" class="primary">运行存储测试</button>
+            <button id="btnStorageClear" class="danger">清理测试数据</button>
+          </div>
+          <table class="kv" id="storageTable"></table>
+        </div>
+        <div class="panel"><h3>存储 API 探测</h3><div class="rows" id="rows-storage"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 现代 API / 权限 ============================ -->
+  <section class="card" id="card-modern">
+    <h2 data-card>🔐 权限与现代 Web API<span class="badge" id="badge-modern"></span></h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="panel">
+          <h3>权限状态（Permissions API）</h3>
+          <div class="controls"><button id="btnPerms">查询全部权限</button></div>
+          <div class="rows" id="rows-perm"></div>
+        </div>
+        <div class="panel">
+          <h3>可交互测试</h3>
+          <div class="controls">
+            <button id="btnVibrate">震动</button>
+            <button id="btnGeo">定位</button>
+            <button id="btnClipRead">读剪贴板</button>
+            <button id="btnClipWrite">写剪贴板</button>
+            <button id="btnNotify">请求通知权限</button>
+            <button id="btnShare">系统分享</button>
+            <button id="btnBattery">电池状态</button>
+          </div>
+          <div class="tiny mono wrap" id="modernOut">未测试</div>
+        </div>
+        <div class="panel" style="grid-column:1/-1"><h3>API 能力探测</h3><div class="rows" id="rows-modern"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 图形 / 性能 ============================ -->
+  <section class="card" id="card-graphics">
+    <h2 data-card>🎮 图形与性能<span class="badge" id="badge-graphics"></span></h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="panel"><h3>GPU / 图形</h3><table class="kv" id="gpuTable"></table></div>
+        <div class="panel"><h3>图形 API 探测</h3><div class="rows" id="rows-graphics"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 结果 ============================ -->
+  <section class="card" id="card-results">
+    <h2 data-card>📋 完整结果与导出<span class="badge" id="badge-results"></span></h2>
+    <div class="body">
+      <p class="hint">本页<strong>没有任何后端</strong>：结果全部留在你的设备上，用下面任意一种方式带走，完全离线可用。</p>
+      <div class="controls">
+        <button id="btnExport2" class="primary">⬇ 导出 JSON</button>
+        <button id="btnExportMd2">📄 导出 Markdown</button>
+        <button id="btnCopy2">⧉ 复制结果</button>
+        <button id="btnShareCode2">🔗 生成分享码</button>
+        <button id="btnSaveHist2">💾 存到本机历史</button>
+      </div>
+      <textarea id="shareCodeBox" readonly placeholder="点「生成分享码」后，压缩过的报告文本会出现在这里，可复制到聊天工具发到电脑" style="display:none;width:100%;height:76px;background:#0a0d12;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.5 ui-monospace,Consolas,monospace;word-break:break-all"></textarea>
+      <details class="result-details" open>
+        <summary>展开/收起全部结果（<span id="allCount">0</span> 项）</summary>
+        <div class="rows" id="rows-all"></div>
+      </details>
+      <label class="tiny" style="display:block;margin-top:10px">备注（会写进导出的报告，方便记录现象）</label>
+      <textarea id="userNote" style="width:100%;height:60px;background:#0a0d12;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font:13px/1.5 inherit"></textarea>
+      <div class="tiny mono wrap" id="reportOut" style="margin-top:8px">尚未导出</div>
+
+      <h3 style="margin:16px 0 6px;font-size:13.5px;color:#cfd9e4">本机历史（localStorage，最多 10 份，可离线回看/下载）</h3>
+      <div id="historyList"></div>
+    </div>
+  </section>
+
+  <!-- ============================ 日志 ============================ -->
+  <section class="card" id="card-log">
+    <h2 data-card>🧾 事件日志<span class="badge" id="badge-log"></span></h2>
+    <div class="body">
+      <div class="controls">
+        <button id="btnLogClear">清空</button>
+        <button id="btnLogCopy">复制日志</button>
+      </div>
+      <div class="log" id="log"></div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  DSH Device API Lab（纯前端版）· 无后端、无网络请求、无第三方资源，可离线使用 · <span id="footInfo"></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
