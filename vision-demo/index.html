@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>2D 视野遮挡 Demo · Among Us 风格</title>
+<style>
+  :root{
+    --bg:#0b1018; --panel:#141c28; --line:#243145;
+    --text:#e7edf7; --muted:#8b9bb3; --accent:#ffd54a; --cyan:#5fd8e8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 18px 40px}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  h1{font-size:20px;margin:0;letter-spacing:.5px}
+  header span{font-size:13px;color:var(--muted)}
+  .stage{position:relative;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    background:#0d1420;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+  canvas{display:block;width:100%;height:auto;aspect-ratio:960/600;cursor:crosshair}
+  .tag{position:absolute;left:12px;top:12px;font-size:11px;color:var(--muted);
+    background:rgba(8,13,22,.72);border:1px solid var(--line);padding:5px 9px;border-radius:6px;
+    pointer-events:none;letter-spacing:.3px}
+  .hud{position:absolute;right:12px;top:12px;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:var(--cyan);background:rgba(8,13,22,.72);border:1px solid var(--line);
+    padding:7px 11px;border-radius:6px;pointer-events:none;text-align:right;min-width:132px}
+  .hud b{color:#fff;font-weight:600}
+  .bar{margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:14px 16px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+  .ctrl{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted)}
+  .ctrl input[type=range]{width:132px;accent-color:var(--accent)}
+  .ctrl output{font:12px ui-monospace,Menlo,monospace;color:var(--text);min-width:38px;text-align:right}
+  .btns{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+  button{background:#1c2737;color:var(--text);border:1px solid var(--line);border-radius:7px;
+    padding:7px 12px;font-size:12px;cursor:pointer;transition:.15s}
+  button:hover{border-color:#3d5878;background:#243247}
+  button.on{background:#2b3f26;border-color:#5f8a4a;color:#b8e89c}
+  kbd{font:11px ui-monospace,Menlo,monospace;background:#0d1420;border:1px solid var(--line);
+    border-radius:4px;padding:1px 5px;color:var(--muted)}
+  .note{margin-top:14px;font-size:13px;line-height:1.85;color:var(--muted)}
+  .note b{color:var(--text);font-weight:600}
+  .note code{font:12px ui-monospace,Menlo,monospace;color:var(--cyan);
+    background:#121a26;padding:1px 5px;border-radius:4px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>2D 视野遮挡 Demo</h1>
+    <span>Among Us 风格 · 可见性多边形 + 暗区遮罩 + 实体裁剪</span>
+  </header>
+
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div class="tag">点击地图瞬移 · 点击门可开关 · WASD / 方向键手动接管</div>
+    <div class="hud" id="hud"></div>
+  </div>
+
+  <div class="bar">
+    <label class="ctrl">视野半径
+      <input id="radius" type="range" min="120" max="430" value="265" step="5">
+      <output id="radiusOut">265</output>
+    </label>
+    <label class="ctrl">暗区浓度
+      <input id="dark" type="range" min="0.20" max="0.90" value="0.44" step="0.01">
+      <output id="darkOut">0.44</output>
+    </label>
+    <label class="ctrl">圆弧过渡带
+      <input id="soft" type="range" min="0.10" max="0.95" value="0.60" step="0.01">
+      <output id="softOut">60%</output>
+    </label>
+    <div class="btns">
+      <button id="btnDoors">切换门 <kbd>E</kbd></button>
+      <button id="btnGod">管理员视角 <kbd>G</kbd></button>
+      <button id="btnRay">显示射线 <kbd>V</kbd></button>
+      <button id="btnPause">暂停 <kbd>Space</kbd></button>
+      <button id="btnReset">重置</button>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>这四段是关键：</b>
+    <code>① rebuildGeometry()</code> 把墙与「关闭的门」统一转成线段表 →
+    <code>② visibility()</code> 向每个墙角发 ±ε 三条射线求最近交点，按角度连成星形多边形 →
+    <code>③ ctx.clip()</code> 让船员只在可见多边形内绘制 →
+    <code>④ lightCv</code> 生成亮度图，再用 <code>destination-out</code> 从冷色暗罩里挖掉。<br>
+    <b>注意边界是两种：</b>被墙截断的<b>阴影边界保持硬切</b>（多边形实心填充、绝不做 blur）；只有<b>射线打到最远半径的那圈圆弧</b>用 <code>radialFade()</code> 渐隐 —— 亮度只由到玩家的距离决定，圆弧处的硬边被藏在 alpha=0 里，所以看不到切线。<br>
+    暗区是一层深蓝灰滤镜、房间轮廓始终可辨，亮区叠一层随亮度渐隐的暖光；墙属于底图常亮，角色属于动态实体必须单独剔除 —— 只盖半透明黑的话，墙后的人会「透」出来。<b>关门时下一帧线段表重建</b>，视野立刻被门截断，不需要任何特殊逻辑。
+  </div>
+  <div class="legend">
+    <span><i class="dot" style="background:#ffd54a"></i>你（视野来源）</span>
+    <span><i class="dot" style="background:#ef5350"></i>随机走动的船员</span>
+    <span><i class="dot" style="background:#5fd8e8"></i>射线与命中点（按 V）</span>
+    <span>■ 门已关闭 / ▸ 门已开启（点击门或按 E 切换）</span>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const TAU = Math.PI * 2;
+  const W = 960, H = 600;
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const hud = document.getElementById('hud');
+  const maskCv = document.createElement('canvas');
+  const mctx = maskCv.getContext('2d');
+  const lightCv = document.createElement('canvas');   // 可见度亮度图（只用 alpha 通道）
+  const lctx = lightCv.getContext('2d');
+  let dpr = 1;
+
+  function resize(){
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    for (const c of [cv, maskCv, lightCv]){ c.width = W * dpr; c.height = H * dpr; }
+    for (const c of [ctx, mctx, lctx]) c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize();
+  addEventListener('resize', resize);
+
+  /* ─────────────────── 地图 ─────────────────── */
+  // 外框同时也是视野边界线段；内部是几个遮挡块（含一张矮桌）
+  const OUTER = { x: 24, y: 24, w: W - 48, h: H - 48 };
+  // 长墙被拆成两段、中间留门洞；门单独放 doors[]，开关时动态增删线段
+  const walls = [
+    { x: 168, y: 116, w: 206, h: 26 },
+    { x: 168, y: 116, w: 26, h: 168 },
+    { x: 466, y: 84,  w: 26, h: 70  },
+    { x: 466, y: 236, w: 26, h: 54  },
+    { x: 624, y: 252, w: 90, h: 26  },
+    { x: 786, y: 252, w: 58, h: 26  },
+    { x: 818, y: 252, w: 26, h: 186 },
+    { x: 244, y: 404, w: 76, h: 26  },
+    { x: 392, y: 404, w: 38, h: 26  },
+    { x: 244, y: 404, w: 26, h: 122 },
+    { x: 396, y: 300, w: 96, h: 62, desk: true },
+    { x: 742, y: 106, w: 92, h: 92 },
+  ];
+  const doors = [
+    { x: 466, y: 154, w: 26, h: 82, open: false, name: 'ELEC' },
+    { x: 714, y: 252, w: 72, h: 26, open: true,  name: 'NAV'  },
+    { x: 320, y: 404, w: 72, h: 26, open: false, name: 'STOR' },
+  ];
+  const decor = [
+    { x: 60,  y: 70,  label: 'CAF' },
+    { x: 520, y: 60,  label: 'ELEC' },
+    { x: 700, y: 470, label: 'NAV' },
+    { x: 70,  y: 470, label: 'STOR' },
+  ];
+
+  /* ① 线段化：所有遮挡体统一转成 2D 线段，与渲染完全解耦 */
+  function rectSegments(r){
+    const x2 = r.x + r.w, y2 = r.y + r.h;
+    return [
+      { a:{x:r.x,y:r.y}, b:{x:x2,y:r.y} },
+      { a:{x:x2,y:r.y},  b:{x:x2,y:y2} },
+      { a:{x:x2,y:y2},   b:{x:r.x,y:y2} },
+      { a:{x:r.x,y:y2},  b:{x:r.x,y:r.y} },
+    ];
+  }
+  // 门关着才算实体：碰撞、线段、墙角三者共用同一份，保证画面与判定严格一致
+  function solidRects(){ return [...walls, ...doors.filter(d => !d.open)]; }
+  let segments = [], corners = [];
+  function rebuildGeometry(){
+    segments = [...rectSegments(OUTER), ...solidRects().flatMap(rectSegments)];
+    const map = new Map();
+    for (const s of segments) for (const p of [s.a, s.b]) map.set(p.x + ',' + p.y, p);
+    corners = [...map.values()];
+  }
+  rebuildGeometry();
+
+  function segNearCircle(s, o, R){
+    const mx = (s.a.x + s.b.x) / 2, my = (s.a.y + s.b.y) / 2;
+    const rr = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) / 2 + R;
+    return (mx-o.x)**2 + (my-o.y)**2 <= rr*rr;
+  }
+
+  /* ─────────────────── 射线 & 可见性多边形 ─────────────────── */
+  // o + t*d = a + u*(b-a)，解 2x2 线性方程；d 为单位向量，t 即距离
+  function cast(o, ang, maxD, segs){
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    let best = maxD;
+    for (const s of segs){
+      const sx = s.b.x - s.a.x, sy = s.b.y - s.a.y;
+      const den = dx * sy - dy * sx;
+      if (Math.abs(den) < 1e-9) continue;              // 平行
+      const qx = s.a.x - o.x, qy = s.a.y - o.y;
+      const t = (qx * sy - qy * sx) / den;             // 射线参数
+      const u = (qx * dy - qy * dx) / den;             // 线段参数
+      if (t > 1e-6 && t < best && u >= 0 && u <= 1) best = t;
+    }
+    return best;
+  }
+
+  /* ② 对每个墙角发 ±ε 三条射线（只打顶点会被浮点误差吞掉、墙角漏光），
+        再补一圈均匀角撑出圆弧；命中点按角度排序，从原点连成星形多边形 */
+  const EPS = 0.0008, ARC_STEPS = 100;
+  function visibility(o, R){
+    const segs = segments.filter(s => segNearCircle(s, o, R)); // 预筛：只算视野圆附近的墙
+    const angles = [];
+    for (const p of corners){
+      const dx = p.x - o.x, dy = p.y - o.y;
+      if (dx*dx + dy*dy > (R + 2)**2) continue;
+      const a = Math.atan2(dy, dx);
+      angles.push(a - EPS, a, a + EPS);
+    }
+    for (let i = 0; i <= ARC_STEPS; i++) angles.push(-Math.PI + i * TAU / ARC_STEPS);
+    angles.sort((a, b) => a - b);
+
+    const pts = [];
+    let last = -Infinity;
+    for (const a of angles){
+      if (a - last < 1e-7) continue;
+      last = a;
+      const d = cast(o, a, R, segs);
+      pts.push({ x: o.x + Math.cos(a)*d, y: o.y + Math.sin(a)*d, a, d });
+    }
+    return { pts, segs, rayCount: pts.length };
+  }
+
+  function polyPath(c, o, pts){
+    c.beginPath();
+    c.moveTo(o.x, o.y);
+    for (const p of pts) c.lineTo(p.x, p.y);
+    c.closePath();  // 连回原点 → 星形扇形，不会在 ±π 处拉出一条横穿画面的弦
+  }
+  // HUD 用：目标之前没有墙才可见（与视觉裁剪共用同一份线段表）
+  function canSee(o, target, R, segs){
+    const dx = target.x - o.x, dy = target.y - o.y;
+    const d = Math.hypot(dx, dy);
+    if (d > R) return false;
+    return cast(o, Math.atan2(dy, dx), R, segs) >= d - 7;
+  }
+
+  /* ─────────────────── 角色 ─────────────────── */
+  const R_BODY = 12;
+  const COLORS = ['#ef5350','#42a5f5','#66bb6a','#ec7ab5','#ffa726','#ab7bf0'];
+  let me, crew;
+
+  function blocked(x, y, r){
+    if (x < OUTER.x+r || x > OUTER.x+OUTER.w-r || y < OUTER.y+r || y > OUTER.y+OUTER.h-r) return true;
+    for (const w of solidRects())
+      if (x > w.x-r && x < w.x+w.w+r && y > w.y-r && y < w.y+w.h+r) return true;
+    return false;
+  }
+  function freeSpot(){
+    for (let i = 0; i < 400; i++){
+      const x = OUTER.x + 30 + Math.random()*(OUTER.w - 60);
+      const y = OUTER.y + 30 + Math.random()*(OUTER.h - 60);
+      if (!blocked(x, y, R_BODY + 8)) return { x, y };
+    }
+    return { x: W/2, y: H/2 };
+  }
+  function makeActor(color, isMe){
+    const p = isMe ? { x: 600, y: 400 } : freeSpot();
+    return { ...p, r: R_BODY, color, dir: Math.random()*TAU,
+             speed: isMe ? 54 : 38 + Math.random()*30,
+             timer: 0, phase: Math.random()*TAU, isMe };
+  }
+  function resetActors(){
+    me = makeActor('#ffd54a', true);
+    const { segs } = visibility(me, 265);
+    crew = COLORS.map((color, i) => {
+      const a = makeActor(color, false);
+      // 前 3 个放视野内、后 3 个放墙后或圆外，一打开就能看出「谁被挡住了」
+      if (i < 3){
+        for (let t = 0; t < 90; t++){
+          const ang = Math.random() * TAU, dist = 85 + Math.random() * 150;
+          const x = me.x + Math.cos(ang) * dist, y = me.y + Math.sin(ang) * dist;
+          if (!blocked(x, y, a.r + 4) && canSee(me, {x, y}, 265, segs)){
+            a.x = x; a.y = y; break;
+          }
+        }
+      } else {
+        for (let t = 0; t < 150; t++){
+          const p = freeSpot();
+          if (!canSee(me, p, 265, segs)){ a.x = p.x; a.y = p.y; break; }
+        }
+      }
+      return a;
+    });
+  }
+  resetActors();
+
+  // 分轴推进：撞墙时沿另一轴滑动，并顺手换个方向
+  function step(e, dt){
+    const vx = Math.cos(e.dir) * e.speed * dt;
+    const vy = Math.sin(e.dir) * e.speed * dt;
+    if (!blocked(e.x + vx, e.y, e.r)) e.x += vx; else e.dir = Math.random()*TAU;
+    if (!blocked(e.x, e.y + vy, e.r)) e.y += vy; else e.dir = Math.random()*TAU;
+    e.phase += dt * 7;
+  }
+
+  const keys = new Set();
+  let manual = 0;
+  function update(dt){
+    if (manual > 0){
+      manual -= dt;
+      let dx = 0, dy = 0;
+      if (keys.has('a') || keys.has('arrowleft'))  dx -= 1;
+      if (keys.has('d') || keys.has('arrowright')) dx += 1;
+      if (keys.has('w') || keys.has('arrowup'))    dy -= 1;
+      if (keys.has('s') || keys.has('arrowdown'))  dy += 1;
+      if (dx || dy){
+        const L = Math.hypot(dx, dy), sp = 150 * dt;
+        if (!blocked(me.x + dx/L*sp, me.y, me.r)) me.x += dx/L*sp;
+        if (!blocked(me.x, me.y + dy/L*sp, me.r)) me.y += dy/L*sp;
+        me.dir = Math.atan2(dy, dx);
+        me.phase += dt * 9;
+      }
+    } else {
+      me.timer -= dt;
+      if (me.timer <= 0){ me.dir = Math.random()*TAU; me.timer = 1.1 + Math.random()*2.4; }
+      step(me, dt);
+    }
+    for (const c of crew){
+      c.timer -= dt;
+      if (c.timer <= 0){ c.dir = Math.random()*TAU; c.timer = 0.8 + Math.random()*2.6; }
+      step(c, dt);
+    }
+  }
+
+  /* ─────────────────── 绘制 ─────────────────── */
+  function roundRect(c, x, y, w, h, r){
+    c.beginPath();
+    c.moveTo(x+r, y);
+    c.arcTo(x+w, y,   x+w, y+h, r);
+    c.arcTo(x+w, y+h, x,   y+h, r);
+    c.arcTo(x,   y+h, x,   y,   r);
+    c.arcTo(x,   y,   x+w, y,   r);
+    c.closePath();
+  }
+
+  function drawFloor(){
+    ctx.fillStyle = '#1e2a3b';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#33455e';
+    ctx.fillRect(OUTER.x, OUTER.y, OUTER.w, OUTER.h);
+
+    // 房间分区色块：暗区里也能隐约辨认布局
+    const zones = [
+      {x:40,y:40,w:380,h:250,c:'#3a4f6c'},
+      {x:510,y:40,w:410,h:250,c:'#334861'},
+      {x:40,y:310,w:380,h:250,c:'#334861'},
+      {x:510,y:310,w:410,h:250,c:'#3a4f6c'},
+    ];
+    for (const z of zones){ ctx.fillStyle = z.c; ctx.fillRect(z.x, z.y, z.w, z.h); }
+
+    ctx.strokeStyle = 'rgba(150,185,225,.10)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = OUTER.x; x < OUTER.x+OUTER.w; x += 40){ ctx.moveTo(x, OUTER.y); ctx.lineTo(x, OUTER.y+OUTER.h); }
+    for (let y = OUTER.y; y < OUTER.y+OUTER.h; y += 40){ ctx.moveTo(OUTER.x, y); ctx.lineTo(OUTER.x+OUTER.w, y); }
+    ctx.stroke();
+
+    // 任务点装饰
+    for (const d of decor){
+      ctx.strokeStyle = 'rgba(140,215,245,.5)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(d.x, d.y, 13, 0, TAU); ctx.stroke();
+      ctx.fillStyle = 'rgba(120,200,230,.22)'; ctx.fill();
+      ctx.fillStyle = 'rgba(180,210,235,.6)';
+      ctx.font = '10px ui-monospace,Menlo,monospace';
+      ctx.fillText(d.label, d.x + 19, d.y + 4);
+    }
+
+    // 外框
+    ctx.strokeStyle = '#7b97ba'; ctx.lineWidth = 4;
+    ctx.strokeRect(OUTER.x, OUTER.y, OUTER.w, OUTER.h);
+  }
+
+  function drawWalls(){
+    for (const w of walls){
+      ctx.fillStyle = w.desk ? '#4c6485' : '#587293';
+      roundRect(ctx, w.x, w.y, w.w, w.h, 5); ctx.fill();
+      if (!w.desk){ ctx.strokeStyle = '#93b0d0'; ctx.lineWidth = 1.5; ctx.stroke(); }
+      // 顶面高光，让墙在暗区也有体积感
+      ctx.fillStyle = 'rgba(200,225,255,.24)';
+      ctx.fillRect(w.x + 3, w.y + 3, w.w - 6, 3);
+      if (w.desk){
+        ctx.fillStyle = 'rgba(180,215,250,.45)';
+        ctx.font = '10px ui-monospace,Menlo,monospace';
+        ctx.fillText('TABLE', w.x + 8, w.y + 20);
+      }
+    }
+  }
+
+  function drawDoors(){
+    for (const d of doors){
+      ctx.save();
+      if (d.open){
+        ctx.fillStyle = 'rgba(90,220,150,.10)';
+        ctx.fillRect(d.x + 2, d.y + 2, d.w - 4, d.h - 4);
+        ctx.strokeStyle = 'rgba(110,225,165,.55)'; ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.strokeRect(d.x + 1, d.y + 1, d.w - 2, d.h - 2);
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#6ee7a8';
+        ctx.beginPath(); ctx.arc(d.x + d.w/2, d.y + d.h/2, 3, 0, TAU); ctx.fill();
+      } else {
+        ctx.fillStyle = '#8a6a3a';
+        roundRect(ctx, d.x, d.y, d.w, d.h, 3); ctx.fill();
+        ctx.strokeStyle = '#d0ac62'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.save();                       // 黄黑警示斜条
+        roundRect(ctx, d.x, d.y, d.w, d.h, 3); ctx.clip();
+        ctx.strokeStyle = 'rgba(42,30,14,.5)'; ctx.lineWidth = 5;
+        ctx.beginPath();
+        for (let k = -d.h; k < d.w + d.h; k += 12){
+          ctx.moveTo(d.x + k, d.y); ctx.lineTo(d.x + k + d.h, d.y + d.h);
+        }
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = '#ff6b5e';
+        ctx.beginPath(); ctx.arc(d.x + d.w/2, d.y + d.h/2, 3, 0, TAU); ctx.fill();
+      }
+      ctx.fillStyle = d.open ? 'rgba(140,235,180,.8)' : 'rgba(255,198,125,.9)';
+      ctx.font = '9px ui-monospace,Menlo,monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText((d.open ? '▸ ' : '■ ') + d.name, d.x + d.w/2, d.y - 5);
+      ctx.textAlign = 'left';
+      ctx.restore();
+    }
+  }
+
+  // Among Us 风格简化小人
+  function drawCrew(c, e){
+    const bob = Math.sin(e.phase) * 1.6;
+    c.save();
+    c.translate(e.x, e.y + bob);
+    c.fillStyle = 'rgba(0,0,0,.32)';
+    c.beginPath(); c.ellipse(0, 15, 13, 4.5, 0, 0, TAU); c.fill();
+    // 腿
+    c.fillStyle = shade(e.color, -0.28);
+    c.fillRect(-8, 7, 6, 9); c.fillRect(3, 7, 6, 9);
+    // 背包
+    c.fillStyle = shade(e.color, -0.2);
+    roundRect(c, -17, -6, 7, 15, 3); c.fill();
+    // 身体
+    c.fillStyle = e.color;
+    c.beginPath(); c.ellipse(0, 0, 11, 14, 0, 0, TAU); c.fill();
+    c.strokeStyle = shade(e.color, -0.38); c.lineWidth = 1.6; c.stroke();
+    // 面罩
+    c.fillStyle = '#9fd8ef';
+    c.beginPath(); c.ellipse(3.5, -3, 6.5, 4.4, -0.12, 0, TAU); c.fill();
+    c.fillStyle = 'rgba(255,255,255,.55)';
+    c.beginPath(); c.ellipse(5, -4.4, 2.6, 1.3, -0.3, 0, TAU); c.fill();
+    c.restore();
+
+    if (e.isMe){
+      c.save();
+      c.strokeStyle = 'rgba(255,213,74,.9)'; c.lineWidth = 2;
+      c.beginPath(); c.arc(e.x, e.y, 19 + Math.sin(e.phase*0.5)*1.5, 0, TAU); c.stroke();
+      c.fillStyle = 'rgba(8,14,24,.82)';
+      roundRect(c, e.x - 14, e.y - 39, 28, 17, 5); c.fill();
+      c.strokeStyle = 'rgba(255,213,74,.55)'; c.lineWidth = 1; c.stroke();
+      c.fillStyle = '#ffd54a'; c.font = '600 11px system-ui,sans-serif'; c.textAlign = 'center';
+      c.fillText('你', e.x, e.y - 26);
+      c.restore();
+    }
+  }
+  function shade(hex, amt){
+    const n = parseInt(hex.slice(1), 16);
+    const f = v => Math.max(0, Math.min(255, Math.round(v + 255*amt)));
+    return `rgb(${f(n>>16&255)},${f(n>>8&255)},${f(n&255)})`;
+  }
+
+  /* 关键：亮度只由「到玩家的距离」决定，不对几何多边形做任何模糊。
+     ① 可见多边形实心填充 → 墙截断出的阴影边界是硬边（锐利、不糊）
+     ② destination-in 叠径向渐隐 → 只在 R*softStart ~ R 这段把亮度压到 0，
+        于是「射线打到最远半径」的那圈圆弧边界被藏在 alpha=0 里，看起来是平滑过渡；
+        而靠近玩家的墙边渐隐值仍是 1，亮度直接 1→0，保持硬切。
+     ③ 用这张亮度图去挖冷色暗罩、并叠暖光，两层完全共用同一份 alpha。 */
+  function radialFade(d, R, softStart){
+    const band = Math.max(1, R * (1 - softStart));
+    const t = Math.max(0, Math.min(1, (R - d) / band));
+    return t * t * (3 - 2 * t);            // smoothstep：带内平滑，带外恒 1
+  }
+  function drawMask(o, R, pts, darkness, softStart, god){
+    mctx.clearRect(0, 0, W, H);
+    lctx.clearRect(0, 0, W, H);
+    if (god) return;                       // 全局视野：不叠加遮罩
+
+    // ① 硬边可见多边形：阴影边界绝不羽化
+    lctx.fillStyle = '#fff';
+    polyPath(lctx, o, pts); lctx.fill();
+
+    // ② 仅最外圈的径向渐隐；用 12 段采样 radialFade 保证与实体淡出严格同曲线
+    lctx.globalCompositeOperation = 'destination-in';
+    const inner = R * softStart, band = R - inner;
+    const g = lctx.createRadialGradient(o.x, o.y, inner, o.x, o.y, R);
+    for (let i = 0; i <= 12; i++){
+      const u = i / 12;                   // 0 → inner（全亮），1 → R（全透）
+      g.addColorStop(u, `rgba(255,255,255,${radialFade(inner + u * band, R, softStart)})`);
+    }
+    lctx.fillStyle = g;
+    lctx.fillRect(0, 0, W, H);
+    lctx.globalCompositeOperation = 'source-over';
+
+    mctx.fillStyle = `rgba(11,19,34,${darkness})`;     // ③ 冷色暗罩
+    mctx.fillRect(0, 0, W, H);
+    mctx.globalCompositeOperation = 'destination-out';
+    mctx.drawImage(lightCv, 0, 0, W, H);
+    mctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(maskCv, 0, 0, W, H);
+
+    // ④ 暖光灯圈：alpha 同样复用 lightCv，阴影边硬、圆弧边渐隐
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = 'rgba(255,230,175,.17)';
+    mctx.fillRect(0, 0, W, H);
+    mctx.globalCompositeOperation = 'destination-in';
+    mctx.drawImage(lightCv, 0, 0, W, H);
+    mctx.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(maskCv, 0, 0, W, H);
+    ctx.restore();
+  }
+
+  function drawDebug(o, pts, segs){
+    ctx.save();
+    ctx.strokeStyle = 'rgba(95,216,232,.16)'; ctx.lineWidth = .7;
+    ctx.beginPath();
+    for (const p of pts){ ctx.moveTo(o.x, o.y); ctx.lineTo(p.x, p.y); }
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(95,216,232,.85)';
+    for (const p of pts){ ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, TAU); ctx.fill(); }
+    ctx.strokeStyle = 'rgba(255,213,74,.7)'; ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (const s of segs){ ctx.moveTo(s.a.x, s.a.y); ctx.lineTo(s.b.x, s.b.y); }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /* ─────────────────── 主循环 ─────────────────── */
+  const ui = {
+    radius: document.getElementById('radius'),
+    dark:   document.getElementById('dark'),
+    soft:   document.getElementById('soft'),
+    rOut:   document.getElementById('radiusOut'),
+    dOut:   document.getElementById('darkOut'),
+    sOut:   document.getElementById('softOut'),
+    doors:  document.getElementById('btnDoors'),
+    god:    document.getElementById('btnGod'),
+    ray:    document.getElementById('btnRay'),
+    pause:  document.getElementById('btnPause'),
+    reset:  document.getElementById('btnReset'),
+  };
+  let god = false, debug = false, paused = false, fps = 60, visibleCount = 0, rayCount = 0;
+
+  function shoveOut(){                       // 阀门瞬间别把角色卡进门里
+    for (const e of [me, ...crew]){
+      if (blocked(e.x, e.y, e.r)){ const p = freeSpot(); e.x = p.x; e.y = p.y; }
+    }
+  }
+  function toggleDoors(){
+    const allOpen = doors.every(d => d.open);
+    for (const d of doors) d.open = !allOpen;   // 状态混杂时先统一关上
+    rebuildGeometry(); shoveOut(); syncUI();
+  }
+  function syncUI(){
+    ui.rOut.value = ui.radius.value;
+    ui.dOut.value = (+ui.dark.value).toFixed(2);
+    ui.sOut.value = Math.round(+ui.soft.value * 100) + '%';   // 过渡带占半径的比例
+    const closed = doors.filter(d => !d.open).length;
+    ui.doors.classList.toggle('on', closed > 0);
+    ui.doors.innerHTML = `门 ${closed}/${doors.length} 关 <kbd>E</kbd>`;
+    ui.god.classList.toggle('on', god);
+    ui.ray.classList.toggle('on', debug);
+    ui.pause.classList.toggle('on', paused);
+    ui.pause.innerHTML = (paused ? '继续' : '暂停') + ' <kbd>Space</kbd>';
+  }
+  ui.radius.oninput = ui.dark.oninput = ui.soft.oninput = syncUI;
+  ui.doors.onclick = toggleDoors;
+  ui.god.onclick   = () => { god = !god; syncUI(); };
+  ui.ray.onclick   = () => { debug = !debug; syncUI(); };
+  ui.pause.onclick = () => { paused = !paused; syncUI(); };
+  ui.reset.onclick = () => { resetActors(); god = debug = paused = false; syncUI(); };
+  syncUI();
+
+  addEventListener('keydown', e => {
+    if (['INPUT','BUTTON'].includes(e.target.tagName)) return;
+    const k = e.key.toLowerCase();
+    keys.add(k);
+    if (k === 'g'){ god = !god; syncUI(); }
+    if (k === 'v'){ debug = !debug; syncUI(); }
+    if (k === 'e'){ toggleDoors(); }
+    if (k === ' '){ e.preventDefault(); paused = !paused; syncUI(); }
+    if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)){
+      e.preventDefault(); manual = 2.5;
+    }
+  });
+  addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+  cv.addEventListener('click', e => {
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width  * W;
+    const y = (e.clientY - r.top)  / r.height * H;
+    const hit = doors.find(d => x > d.x-8 && x < d.x+d.w+8 && y > d.y-8 && y < d.y+d.h+8);
+    if (hit){ hit.open = !hit.open; rebuildGeometry(); shoveOut(); syncUI(); return; }
+    if (!blocked(x, y, me.r)){ me.x = x; me.y = y; me.timer = 1.5; manual = 1.2; }
+  });
+
+  let prev = performance.now();
+  function frame(now){
+    let dt = Math.min((now - prev) / 1000, 0.05);
+    prev = now;
+    if (dt > 0) fps = fps * 0.92 + (1/dt) * 0.08;
+    if (!paused && dt > 0) update(dt);
+
+    const R = +ui.radius.value;
+    const darkness = +ui.dark.value;
+    const softStart = 1 - +ui.soft.value;   // 滑块 = 过渡带宽度，softStart = 全亮区半径比例
+    const { pts, segs, rayCount: rc } = visibility(me, R);
+    rayCount = rc;
+
+    drawFloor();
+    drawWalls();
+    drawDoors();
+
+    // ③ 动态实体单独裁剪：只有落在可见多边形里的船员才绘制。
+    //    淡出只跟距离走（圆弧过渡）；被墙挡住直接 0，不做任何渐变。
+    let shown = 0;
+    ctx.save();
+    if (!god){ polyPath(ctx, me, pts); ctx.clip(); }
+    for (const c of crew){
+      let a = 1;
+      if (!god){
+        if (!canSee(me, c, R, segs)) a = 0;
+        else a = radialFade(Math.hypot(c.x - me.x, c.y - me.y), R, softStart);
+      }
+      if (a < 0.02) continue;
+      ctx.globalAlpha = a;
+      drawCrew(ctx, c);
+      shown++;
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    visibleCount = shown;
+
+    drawMask(me, R, pts, darkness, softStart, god);
+
+    // 主角画在遮罩之后，始终鲜亮
+    drawCrew(ctx, me);
+    if (debug && !god) drawDebug(me, pts, segs);
+
+    hud.innerHTML =
+      `FPS <b>${fps.toFixed(0)}</b><br>` +
+      `射线 <b>${rayCount}</b><br>` +
+      `线段 <b>${segs.length}/${segments.length}</b><br>` +
+      `可见船员 <b>${visibleCount}/${crew.length}</b><br>` +
+      `门 <b>${doors.filter(d => !d.open).length}/${doors.length} 关</b>` +
+      (god ? '<br><b>全局视野</b>' : '');
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
